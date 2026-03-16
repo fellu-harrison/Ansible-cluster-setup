@@ -1,0 +1,25 @@
+# roles/azure_addons/tasks/main.yml
+
+- name: Install Azure Disk CSI driver
+  command: >
+    kubectl apply -f
+    https://raw.githubusercontent.com/kubernetes-sigs/azuredisk-csi-driver/master/deploy/install-driver.sh
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Install Azure File CSI driver
+  command: >
+    kubectl apply -f
+    https://raw.githubusercontent.com/kubernetes-sigs/azurefile-csi-driver/master/deploy/install-driver.sh
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Wait for Azure Disk CSI driver
+  shell: kubectl rollout status deployment csi-azuredisk-controller -n kube-system
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Wait for Azure File CSI driver
+  shell: kubectl rollout status deployment csi-azurefile-controller -n kube-system
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
