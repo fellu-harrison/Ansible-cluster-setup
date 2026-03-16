@@ -1,0 +1,182 @@
+---
+
+# ------------------------------------------------
+# Check if cluster is already initialized
+# ------------------------------------------------
+
+- name: Check if cluster already initialized
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: cluster_initialized
+
+# ------------------------------------------------
+# Initialize cluster (only if not already done)
+# ------------------------------------------------
+
+- name: Initialize cluster
+  command: kubeadm init --pod-network-cidr={{ pod_network_cidr }}
+  when: not cluster_initialized.stat.exists
+
+# ------------------------------------------------
+# Ensure kubeconfig directory exists
+# ------------------------------------------------
+
+- name: Ensure .kube directory exists
+  file:
+    path: /home/{{ ansible_user }}/.kube
+    state: directory
+    mode: '0755'
+
+# ------------------------------------------------
+# Copy admin.conf safely (idempotent)
+# ------------------------------------------------
+
+- name: Copy admin.conf to user kubeconfig
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/{{ ansible_user }}/.kube/config
+    remote_src: yes
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0644'
+
+# ------------------------------------------------
+# Wait for API server to be reachable
+# ------------------------------------------------
+
+- name: Wait for Kubernetes API to be reachable
+  shell: |
+    for i in {1..30}; do
+      kubectl get nodes && exit 0
+      sleep 5
+    done
+    exit 1
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  when: cluster_initialized.stat.exists or not cluster_initialized.stat.exists
+
+# ------------------------------------------------
+# Remove control-plane taint (allow scheduling on master)
+# ------------------------------------------------
+
+- name: Check if control-plane taint exists
+  shell: kubectl get node master -o jsonpath='{.spec.taints[*].key}'
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  register: node_taints
+  changed_when: false
+
+- name: Remove control-plane taint
+  shell: kubectl taint nodes master node-role.kubernetes.io/control-plane:NoSchedule-
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  when: "'node-role.kubernetes.io/control-plane' in node_taints.stdout"
+
+# ------------------------------------------------
+# Check if Flannel is already installed
+# ------------------------------------------------
+
+- name: Check if Flannel is installed
+  shell: kubectl get ds -n kube-flannel 2>/dev/null | grep kube-flannel
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  register: flannel_check
+  ignore_errors: yes
+
+# ------------------------------------------------
+# Install Flannel if missing
+# ------------------------------------------------
+
+- name: Install Flannel
+  command: kubectl apply --validate=false -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  when: flannel_check.rc != 0
+
+# ------------------------------------------------
+# Wait for network to be ready
+# ------------------------------------------------
+
+- name: Wait for Flannel pods
+  shell: kubectl wait --for=condition=Ready pod -l app=flannel -n kube-flannel --timeout=300s
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  when: flannel_check.rc != 0
+
+# ------------------------------------------------
+# Check if Metrics Server is installed
+# ------------------------------------------------
+
+- name: Check if metrics-server exists
+  shell: kubectl get deployment metrics-server -n kube-system
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  register: metrics_check
+  ignore_errors: yes
+
+# ------------------------------------------------
+# Install Metrics Server
+# ------------------------------------------------
+
+- name: Install Metrics Server
+  command: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  when: metrics_check.rc != 0
+
+# ------------------------------------------------
+# Patch Metrics Server (Fix kubelet TLS + secure port)
+# ------------------------------------------------
+
+- name: Patch metrics-server arguments
+  shell: |
+    kubectl patch deployment metrics-server -n kube-system \
+    --type='json' \
+    -p='[
+      {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"},
+      {"op":"replace","path":"/spec/template/spec/containers/0/args/1","value":"--secure-port=4443"}
+    ]' || true
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+# ------------------------------------------------
+# Restart Metrics Server Deployment
+# ------------------------------------------------
+
+- name: Restart metrics-server deployment
+  shell: kubectl rollout restart deployment metrics-server -n kube-system
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+# ------------------------------------------------
+# Force remove terminating metrics-server pods
+# ------------------------------------------------
+
+- name: Force remove terminating metrics-server pods
+  shell: |
+    kubectl get pods -n kube-system | grep metrics-server | grep Terminating | awk '{print $1}' | \
+    xargs -r kubectl delete pod -n kube-system --grace-period=0 --force
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  ignore_errors: yes
+
+# ------------------------------------------------
+# Wait for Metrics Server to be Ready
+# ------------------------------------------------
+
+- name: Wait for metrics-server rollout
+  shell: kubectl rollout status deployment metrics-server -n kube-system --timeout=300s
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+# ------------------------------------------------
+# Always generate fresh join command
+# ------------------------------------------------
+
+- name: Generate join command
+  command: kubeadm token create --print-join-command
+  register: join_cmd
+
+- name: Save join command
+  set_fact:
+    join_command: "{{ join_cmd.stdout }}"
