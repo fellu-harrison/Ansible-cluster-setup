@@ -1,0 +1,25 @@
+# roles/gcp_addons/tasks/main.yml
+
+- name: Install GCP Filestore CSI driver
+  command: >
+    kubectl apply -k
+    "github.com/kubernetes-sigs/gcp-filestore-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Install GCP Compute Persistent Disk CSI driver
+  command: >
+    kubectl apply -k
+    "github.com/kubernetes-sigs/gcp-compute-persistent-disk-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Wait for GCP PD CSI driver
+  shell: kubectl rollout status deployment csi-gce-pd-controller -n kube-system
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Wait for GCP Filestore CSI driver
+  shell: kubectl rollout status deployment csi-gcp-filestore-controller -n kube-system
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
