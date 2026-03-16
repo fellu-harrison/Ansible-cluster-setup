@@ -1,0 +1,32 @@
+# roles/aws_addons/tasks/main.yml
+
+- name: Install AWS VPC CNI
+  command: >
+    kubectl apply -f
+    https://raw.githubusercontent.com/aws/amazon-vpc-cni-k8s/master/config/master/aws-k8s-cni.yaml
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Install AWS EBS CSI driver
+  command: >
+    kubectl apply -k
+    "github.com/kubernetes-sigs/aws-ebs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Install AWS EFS CSI driver
+  command: >
+    kubectl apply -k
+    "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Wait for EBS CSI driver
+  shell: kubectl rollout status deployment ebs-csi-controller -n kube-system
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Wait for EFS CSI driver
+  shell: kubectl rollout status deployment efs-csi-controller -n kube-system
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
