@@ -1,0 +1,32 @@
+---
+# ----------------------------------------
+# Install NGINX Ingress Controller
+# ----------------------------------------
+
+- name: Install NGINX Ingress Controller
+  command: >
+    kubectl apply -f
+    https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+# ----------------------------------------
+# Install Metrics Server
+# ----------------------------------------
+
+- name: Install Metrics Server
+  command: >
+    kubectl apply -f
+    https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+
+- name: Patch Metrics Server for insecure TLS
+  command: >
+    kubectl patch deployment metrics-server
+    -n kube-system
+    --type='json'
+    -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  ignore_errors: yes
