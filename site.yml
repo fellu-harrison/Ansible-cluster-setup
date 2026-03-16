@@ -1,0 +1,65 @@
+---
+# ------------------------------------------------
+# Ask user which cloud to deploy on
+# ------------------------------------------------
+
+- hosts: localhost
+  gather_facts: false
+
+  vars_prompt:
+    - name: cloud_provider
+      prompt: "Enter cloud provider (vm/aws/gcp/azure)"
+      private: no
+
+  tasks:
+    - name: Save selected cloud provider
+      set_fact:
+        selected_cloud: "{{ cloud_provider }}"
+
+
+# ------------------------------------------------
+# Prepare all nodes
+# ------------------------------------------------
+
+- hosts: all
+  become: yes
+  vars:
+    cloud_provider: "{{ hostvars['localhost']['selected_cloud'] }}"
+  roles:
+    - common
+    - containerd
+    - kubernetes
+
+
+# ------------------------------------------------
+# Setup master node
+# ------------------------------------------------
+
+- hosts: masters
+  become: yes
+  vars:
+    cloud_provider: "{{ hostvars['localhost']['selected_cloud'] }}"
+  roles:
+    - master
+    - addons
+
+    - role: aws_addons
+      when: cloud_provider == "aws"
+
+    - role: gcp_addons
+      when: cloud_provider == "gcp"
+
+    - role: azure_addons
+      when: cloud_provider == "azure"
+
+
+# ------------------------------------------------
+# Setup worker nodes
+# ------------------------------------------------
+
+- hosts: workers
+  become: yes
+  vars:
+    cloud_provider: "{{ hostvars['localhost']['selected_cloud'] }}"
+  roles:
+    - worker
