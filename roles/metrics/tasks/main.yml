@@ -1,0 +1,23 @@
+---
+- name: Deploy Metrics Server
+  command: >
+    kubectl apply -f
+    https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  register: metrics_apply
+  changed_when: "'created' in metrics_apply.stdout or 'configured' in metrics_apply.stdout"
+
+- name: Patch metrics-server for insecure TLS (kubeadm fix)
+  command: >
+    kubectl patch deployment metrics-server -n kube-system
+    --type='json'
+    -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  ignore_errors: yes
+
+- name: Wait for metrics-server to be Ready
+  shell: kubectl rollout status deployment metrics-server -n kube-system
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
