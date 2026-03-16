@@ -1,0 +1,79 @@
+---
+
+# -----------------------------
+# Clean old CNI state (safe)
+# -----------------------------
+
+- name: Stop kubelet before cleanup
+  systemd:
+    name: kubelet
+    state: stopped
+  ignore_errors: yes
+
+- name: Ensure CNI config directory exists
+  file:
+    path: /etc/cni/net.d
+    state: directory
+    mode: '0755'
+
+- name: Remove old CNI configs
+  file:
+    path: /etc/cni/net.d
+    state: absent
+
+- name: Recreate CNI config directory
+  file:
+    path: /etc/cni/net.d
+    state: directory
+    mode: '0755'
+
+- name: Check if cni0 exists
+  command: ip link show cni0
+  register: cni0_check
+  failed_when: false
+  changed_when: false
+
+- name: Delete cni0 interface
+  command: ip link delete cni0
+  when: cni0_check.rc == 0
+
+- name: Check if flannel.1 exists
+  command: ip link show flannel.1
+  register: flannel_check
+  failed_when: false
+  changed_when: false
+
+- name: Delete flannel interface
+  command: ip link delete flannel.1
+  when: flannel_check.rc == 0
+
+- name: Flush iptables
+  shell: |
+    iptables -F
+    iptables -t nat -F
+    iptables -t mangle -F
+    iptables -X
+  ignore_errors: yes
+
+- name: Restart containerd
+  systemd:
+    name: containerd
+    state: restarted
+
+- name: Start kubelet
+  systemd:
+    name: kubelet
+    state: started
+
+# -----------------------------
+# Join cluster (idempotent)
+# -----------------------------
+
+- name: Check if node already joined
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+
+- name: Join cluster
+  command: "{{ hostvars[groups['masters'][0]].join_command }}"
+  when: not kubelet_conf.stat.exists
